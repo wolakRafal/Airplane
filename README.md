@@ -1,1 +1,1 @@
-This file was created by IntelliJ IDEA 12.1.6 for binding GitHub repository
+Airplane pet Project - when reading Akka Concurrency book by Derek Wyatt
