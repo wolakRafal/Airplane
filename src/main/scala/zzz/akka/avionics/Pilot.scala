@@ -23,9 +23,6 @@ package zzz.akka.avionics
 
 import akka.actor._
 import zzz.akka.avionics.Pilots.ReadyToGo
-import akka.actor.ActorIdentity
-import scala.Some
-import akka.actor.Identify
 
 object Pilots {
 
@@ -35,60 +32,51 @@ object Pilots {
 
 }
 
-class Pilot extends Actor {
+class Pilot(plane: ActorRef,
+            autopilot: ActorRef,
+            var controls: ActorRef,
+            altimeter: ActorRef) extends Actor {
 
-  import Pilots._
-
-  val copilotIdentifyId = "copilot"
-  val autopilotIdentifyId = "autopilot"
-  var controls: ActorRef = context.system.deadLetters
   var copilot: ActorRef = context.system.deadLetters
-  var autopilot: ActorRef = context.system.deadLetters
-
   val copilotName = context.system.settings.config.getString("zzz.akka.avionics.flightcrew.copilotName")
 
   def receive = {
     case ReadyToGo =>
-      context.parent ! Plane.GiveMeControl
-      context.actorSelection("../" + copilotName) ! Identify(copilotIdentifyId)
-      context.actorSelection("../AutoPilot") ! Identify(autopilotIdentifyId)
-    //    case Controls(controlSurfaces) =>
-    //      controls = controlSurfaces
-    case ActorIdentity(`copilotIdentifyId`, Some(ref)) =>
-      copilot = ref
-    case ActorIdentity(`autopilotIdentifyId`, Some(ref)) =>
-      autopilot = ref
-    // Failure scenarios TODO
-    //    case ActorIdentity(`copilotIdentifyId`, None) =>
-    //    case ActorIdentity(`autopilotIdentifyId`, None) =>
-
+      copilot = context.actorFor("../" + copilotName)
   }
 }
 
-class CoPilot extends Actor {
-
+class CoPilot(plane: ActorRef, autopilot: ActorRef, altimeter: ActorRef) extends Actor {
   import Pilots._
 
   var controls: ActorRef = context.system.deadLetters
   var pilot: ActorRef = context.system.deadLetters
-  var autopilot: ActorRef = context.system.deadLetters
   val pilotName = context.system.settings.config.getString(
     "zzz.akka.avionics.flightcrew.pilotName")
 
   def receive = {
     case ReadyToGo =>
       pilot = context.actorFor("../" + pilotName)
-      autopilot = context.actorFor("../AutoPilot")
+      context.watch(pilot)
+    case Terminated(_) =>
+      plane ! Plane.GiveMeControl
+    case controlsSurface: ActorRef =>
+      controls = controlsSurface
   }
 }
+
 class AutoPilot extends Actor with ActorLogging {
   def receive = {
     case ReadyToGo =>
       log.info("AutoPilot ready To Go!")
   }
 }
+
 trait PilotProvider {
-  def pilot: Actor = new Pilot
-  def copilot: Actor = new CoPilot
-  def autopilot: Actor = new AutoPilot
+  def newPilot(plane: ActorRef, autopilot: ActorRef, controls: ActorRef, altimeter: ActorRef): Actor =
+    new Pilot(plane, autopilot, controls, altimeter)
+
+  def newCoPilot(plane: ActorRef, autopilot: ActorRef, altimeter: ActorRef): Actor = new CoPilot(plane, autopilot, altimeter)
+
+  def newAutopilot: Actor = new AutoPilot
 }
