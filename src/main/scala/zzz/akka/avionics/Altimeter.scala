@@ -24,6 +24,7 @@ package zzz.akka.avionics
 // Imports to help us create Actors, plus logging
 
 import akka.actor.{Props, Actor, ActorSystem, ActorLogging}
+import zzz.akka.avionics.StatusReporter.{StatusOK, Status}
 
 // The duration package object extends Ints with some timing functionality
 
@@ -43,7 +44,7 @@ object Altimeter {
   def apply() = new Altimeter with ProductionEventSource
 }
 
-class Altimeter extends Actor with ActorLogging { this: EventSource =>
+class Altimeter extends Actor with ActorLogging with StatusReporter { this: EventSource =>
 
   import Altimeter._
 
@@ -66,7 +67,7 @@ class Altimeter extends Actor with ActorLogging { this: EventSource =>
   // altitude
   case object Tick
 
-  def receive: Actor.Receive = eventSourceReceive orElse altimeterReceive
+  def receive: Actor.Receive = statusReceive orElse eventSourceReceive orElse altimeterReceive
 
   def altimeterReceive: Receive = {
     // Our rate of climb has changed
@@ -83,5 +84,8 @@ class Altimeter extends Actor with ActorLogging { this: EventSource =>
   }
 
   override def postStop(): Unit = ticker.cancel()
+
+  // We happy
+  override def currentStatus: Status = StatusOK
 }
 

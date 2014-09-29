@@ -22,6 +22,7 @@
 package zzz.akka.avionics
 
 import akka.actor.{Actor, ActorLogging}
+import zzz.akka.avionics.StatusReporter.StatusOK
 import scala.concurrent.duration._
 
 object HeadingIndicator {
@@ -37,7 +38,7 @@ object HeadingIndicator {
 }
 
 
-trait HeadingIndicator extends Actor with ActorLogging {
+trait HeadingIndicator extends Actor with ActorLogging with StatusReporter {
   this: EventSource =>
 
   import HeadingIndicator._
@@ -45,6 +46,9 @@ trait HeadingIndicator extends Actor with ActorLogging {
 
   // Internal message we use to recalculate our heading
   case object Tick
+
+  // The HeadingIndicator is always happy
+  def currentStatus = StatusOK
 
   // Maximum degrees per second  that our plane can move
   val maxDegPerSec = 5
@@ -77,7 +81,7 @@ trait HeadingIndicator extends Actor with ActorLogging {
 
   // Remember that we're mixing in the EventSource and thus have to
   // compose our receive partial function accordingly
-  def receive = eventSourceReceive orElse headingIndicatorReceive
+  def receive = statusReceive orElse eventSourceReceive orElse headingIndicatorReceive
   // Don't forget to cancel our timer when we shut down
   override def postStop(): Unit = ticker.cancel
 }
