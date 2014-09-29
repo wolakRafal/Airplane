@@ -23,8 +23,10 @@ package zzz.akka.avionics
 
 import akka.actor.{Props, Actor, ActorLogging}
 import akka.pattern.ask
+import akka.routing.FromConfig
 import zzz.akka.avionics.EventSource.RegisterListener
 import zzz.akka.avionics.IsolatedLifeCycleSupervisor.WaitForStart
+import zzz.akka.avionics.passengers.PassengerSupervisor
 import scala.concurrent.Await
 import scala.concurrent.duration._
 
@@ -38,17 +40,20 @@ object Plane {
 // We want the Plane to own the Altimeter and we're going to do that
 // by passing in a specific factory we can use to build the Altimeter
 class Plane extends Actor with ActorLogging {
-  this: AltimeterProvider with PilotProvider with LeadFlightAttendantProvider =>
+  this: AltimeterProvider with PilotProvider with LeadFlightAttendantProvider with HeadingIndicatorProvider =>
 
   import Altimeter._
   import Plane._
+
   val config = context.system.settings.config
 
   val pilotName = config.getString("zzz.akka.avionics.flightcrew.pilotName")
   val copilotName = config.getString("zzz.akka.avionics.flightcrew.copilotName")
   val autopilotName = config.getString("AutoPilot")
   val attendantName = config.getString("zzz.akka.avionics.flightcrew.leadAttendantName")
-
+  val altimeterName = "Altimeter"
+  val headingIndicatorName = "HeadingIndicator"
+  val controlSurfacesName = "ControlSurfaces"
   val flightAttendant = context.actorOf(Props(LeadFlightAttendant()),
     config.getString("zzz.akka.avionics.flightcrew.leadAttendantName"))
 
@@ -58,9 +63,10 @@ class Plane extends Actor with ActorLogging {
   def startControls() = {
     val controls = context.actorOf(Props(new IsolatedResumeSupervisor with OneForOneStrategyFactory {
       def childStarter(): Unit = {
-        val alt = context.actorOf(Props(newAltimeter), "Altimeter")
-        context.actorOf(Props(newAutopilot), "AutoPilot")
-        context.actorOf(Props(new ControlSurfaces(alt)), "ControlSurfaces")
+        val alt = context.actorOf(Props(newAltimeter), altimeterName)
+        val heading = context.actorOf(Props(newHeadingIndicator), headingIndicatorName)
+        context.actorOf(Props(newAutopilot), autopilotName)
+        context.actorOf(Props(new ControlSurfaces(self, alt, heading)), controlSurfacesName)
       }
     }), "Controls")
     Await.result(controls ? WaitForStart, 1.second)
@@ -70,19 +76,24 @@ class Plane extends Actor with ActorLogging {
   def actorForControls(name: String) = context.actorFor("Controls/" + name)
 
   def startPeople() {
+    // Use the Router as defined in the configuration file
+    // under the name "LeadFlightAttendant"
+    val leadAttendant = context.actorOf(Props(newFlightAttendant).withRouter(FromConfig()), "LeadFlightAttendant")
+
     val plane = self
     // Note how we depend on the Actor structure beneath
     // us here by using actorFor(). This should be
     // resilient to change, since we'll probably be the
     // ones making the changes
-    val controls = actorForControls("ControlSurfaces")
-    val autopilot = actorForControls("AutoPilot")
-    val altimeter = actorForControls("Altimeter")
+    val controls = actorForControls(controlSurfacesName)
+    val autopilot = actorForControls(autopilotName)
+    val altimeter = actorForControls(altimeterName)
     val people = context.actorOf(Props(new IsolatedStopSupervisor
-      with OneForOneStrategyFactory {
+                                        with OneForOneStrategyFactory {
       def childStarter() {
-        context.actorOf(Props(newCoPilot(plane, autopilot, altimeter)),copilotName)
-        context.actorOf(Props(newPilot(plane, autopilot,controls, altimeter)),pilotName)
+        context.actorOf(Props(PassengerSupervisor(leadAttendant)), "Passenegers")
+        context.actorOf(Props(newCoPilot(plane, autopilot, altimeter)), copilotName)
+        context.actorOf(Props(newPilot(plane, autopilot, controls, altimeter)), pilotName)
       }
     }), "Pilots")
     // Use the default strategy here, which
@@ -102,13 +113,14 @@ class Plane extends Actor with ActorLogging {
   // Helps us look up Actors within the "Pilots" Supervisor
   def actorForPilots(name: String) = context.actorFor("Pilots/" + name)
 
-  override def preStart(){
+  override def preStart() {
     // Get our children going. Order is important here.
     startControls()
     startPeople()
     // Bootstrap the system
-    actorForControls("Altimeter") ! EventSource.RegisterListener(self)
+    actorForControls(altimeterName) ! EventSource.RegisterListener(self)
     actorForPilots(pilotName) ! Pilots.ReadyToGo
     actorForPilots(copilotName) ! Pilots.ReadyToGo
-  }}
+  }
+}
 
